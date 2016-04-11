@@ -1,3 +1,10 @@
+template<typename T>
+__global__ void initKernel(T * devPtr, const T val, const size_t nwords)
+{
+    int tidx = threadIdx.x + blockDim.x * blockIdx.x;
+    devPtr[tidx] = val;
+}
+
 __device__ double atomicAdd(double* address, double val)
 {
     unsigned long long int* address_as_ull =
