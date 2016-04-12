@@ -1,3 +1,15 @@
+
+/*
+ * Functions required to compute histograms 
+ * which in turn are required for covered camera
+ * algorithms.
+*/
+
+ /*
+  * Initialize kernel to given value. Preferred this over
+  * CudaMemSet because cudamemset doesn't work on float/double
+  * data types
+*/
 template<typename T>
 __global__ void initKernel(T * devPtr, const T val, const size_t nwords)
 {
@@ -19,12 +31,25 @@ old = atomicCAS(address_as_ull, assumed,
     return __longlong_as_double(old);
 }
 
+/*
+ * Convert given image into a 32 bin
+ * histogram
+*/ 
 
 __global__ void
 naiveHistoKernel_32 (double *image , double* histo)
-{
-      int id = blockIdx.x * blockDim.x + threadIdx.x ;
-      int index = (int) image[id];
-      atomicAdd (&histo[index/8] , 1.0 );
+{	
+	__shared__ double temp[32];
+	if(threadIdx.x<32){
+     	temp[threadIdx.x] = 0;
+     	__syncthreads();
+     }
+    int id = blockIdx.x * blockDim.x + threadIdx.x ;
+    int index = (int) image[id];
+    atomicAdd (&temp[index/8] , 1.0);
+    __syncthreads();
+    if(threadIdx.x<32){
+    	atomicAdd( &(histo[threadIdx.x]), temp[threadIdx.x] );
+    }
 
 }

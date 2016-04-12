@@ -30,7 +30,8 @@ int main(int argc, char* argv[])
 void startVideoCapture(){
     // Host Image array
     double * In_h;
-    bool frameCoveredCamera_h;
+    bool frameCoveredCamera_h, * frameCoveredCamera_d;
+    
     /*
      * Device Image arrays
      * Three buffers used 
@@ -66,7 +67,11 @@ void startVideoCapture(){
     Diffn_h = (double *)malloc(32*sizeof(double));
 
     double * p;
-
+    /*
+     * Allocate memory on device for 
+     * current, previous frames, moving pixel map
+     * and threshold
+    */
     cudaMalloc((void **)&In_d, mem_size*sizeof(double));
     cudaMalloc((void **)&In_1_d, mem_size*sizeof(double));
     cudaMalloc((void **)&In_2_d, mem_size*sizeof(double));
@@ -74,7 +79,12 @@ void startVideoCapture(){
     cudaMalloc((void **)&Tn_d, mem_size*sizeof(double));
     cudaMalloc((void **)&Diffn_d, mem_size*sizeof(double));
     cudaMalloc((void **)&MovingPixelMap_d, mem_size*sizeof(double));
+    //cudaMalloc((void **)&frameCoveredCamera_d, sizeof(bool));
 
+    /*
+     * Allocate memory for histograms
+     *
+    */
     cudaMalloc((void **)&hist_In_d, 32*sizeof(double));
     cudaMalloc((void **)&hist_Bn_d, 32*sizeof(double));
     cudaMalloc((void **)&hist_Diffn_d, 32*sizeof(double));
@@ -88,7 +98,7 @@ void startVideoCapture(){
     while(frame_counter < frame_count)
     {
 
-        printf("FRAME COUNTER:%d!!!!!\n\n\n", frame_counter );
+        // printf("FRAME COUNTER:%d!!!!!\n\n\n", frame_counter );
         Mat frame;
 
         bool success = cap.read(frame);
@@ -143,60 +153,71 @@ void startVideoCapture(){
 
         differenceInCurrent_Background<<<frame_height, frame_width>>>(In_d, Bn_d, Diffn_d);
 
-        
+        /*
+         * Initialize the three kernels to 0
+        */
         initKernel<<<1,32>>>(hist_In_d, 0.0, 32);
         initKernel<<<1,32>>>(hist_Bn_d, 0.0, 32);
         initKernel<<<1,32>>>(hist_Diffn_d, 0.0, 32);
 
         naiveHistoKernel_32<<<frame_height,frame_width>>>(In_d, hist_In_d);
-        printf("In\n");
-        cudaMemcpy( Diffn_h, hist_In_d, 32*sizeof(double), cudaMemcpyDeviceToHost);
-        printArr(Diffn_h, 32);
+        // printf("In\n");
+        // cudaMemcpy( Diffn_h, hist_In_d, 32*sizeof(double), cudaMemcpyDeviceToHost);
+        // printArr(Diffn_h, 32);
         naiveHistoKernel_32<<<frame_height,frame_width>>>(Bn_d, hist_Bn_d);
-        printf("Bn\n");
-        cudaMemcpy( Diffn_h, hist_Bn_d, 32*sizeof(double), cudaMemcpyDeviceToHost);
-        printArr(Diffn_h, 32);
+        // printf("Bn\n");
+        // cudaMemcpy( Diffn_h, hist_Bn_d, 32*sizeof(double), cudaMemcpyDeviceToHost);
+        // printArr(Diffn_h, 32);
         naiveHistoKernel_32<<<frame_height,frame_width>>>(Diffn_d, hist_Diffn_d);
         
-        /*Copying images from device to host
-        * Saving images for Demo 1
+        /*
+         * Calling the covered camera detection algorithm
+         * The threshold value for the two equations has been
+         * emeprically determined. Th1 = 1.1, Th2 = 1.1 
         */
-        CoveredCameraDetection<<<1,1>>>(hist_In_d, hist_Bn_d, 1.1,1.1,hist_Diffn_d);
-        printf("Diffn\n");
-        cudaMemcpy( Diffn_h, hist_Diffn_d, 32*sizeof(double), cudaMemcpyDeviceToHost);
-        printArr(Diffn_h, 32);
+        CoveredCameraDetection<<<1,1>>>(hist_In_d, hist_Bn_d, 1.1,1.1,hist_Diffn_d, frameCoveredCamera_d);
+        // printf("Diffn\n");
+        // cudaMemcpy( Diffn_h, hist_Diffn_d, 32*sizeof(double), cudaMemcpyDeviceToHost);
+        // printArr(Diffn_h, 32);
         
-        cudaMemcpyFromSymbol(&frameCoveredCamera_h, frameCoveredCamera, sizeof(frameCoveredCamera_h), 0, cudaMemcpyDeviceToHost);
-        printf("\nOn Host:%d\n",frameCoveredCamera_h);
+        /*
+         * Need to access the truth value calculated inside kernels
+         * in the host code
+        */
+        //cudaMemcpy(&frameCoveredCamera_h, frameCoveredCamera_d, sizeof(frameCoveredCamera_h), cudaMemcpyDeviceToHost);
+        // printf("\nOn Host:%d\n",frameCoveredCamera_h);
         //cudaMemcpy(hist_h, hist_d, 32*sizeof(double), cudaMemcpyDeviceToHost);
         //printArr(hist_h, 32);
 
         //Converting to opencv::Mat in order to save it as jpeg file
         
-        
-        if (frameCoveredCamera_h){
-            cudaMemcpy( MovingPixelMap_h, MovingPixelMap_d, mem_size*sizeof(double), cudaMemcpyDeviceToHost);
-            cudaMemcpy(Bn_h, Bn_d, mem_size*sizeof(double), cudaMemcpyDeviceToHost);
-            cudaMemcpy(Tn_h, Tn_d, mem_size*sizeof(double), cudaMemcpyDeviceToHost);
+        /*
+         * Saving all the frames for which the 
+         * covered camera algorithm returned true
+        */
+        // if (frameCoveredCamera_h){
+        //     cudaMemcpy( MovingPixelMap_h, MovingPixelMap_d, mem_size*sizeof(double), cudaMemcpyDeviceToHost);
+        //     cudaMemcpy(Bn_h, Bn_d, mem_size*sizeof(double), cudaMemcpyDeviceToHost);
+        //     cudaMemcpy(Tn_h, Tn_d, mem_size*sizeof(double), cudaMemcpyDeviceToHost);
 
-            Mat MovingPixelMap_mat = Mat(frame_height, frame_width, CV_64F, MovingPixelMap_h);
-            Mat In_mat = Mat(frame_height, frame_width, CV_64F, In_h);
-            Mat Tn_mat = Mat(frame_height, frame_width, CV_64F, Tn_h);
-            Mat Bn_mat = Mat(frame_height, frame_width, CV_64F, Bn_h);
+        //     Mat MovingPixelMap_mat = Mat(frame_height, frame_width, CV_64F, MovingPixelMap_h);
+        //     Mat In_mat = Mat(frame_height, frame_width, CV_64F, In_h);
+        //     Mat Tn_mat = Mat(frame_height, frame_width, CV_64F, Tn_h);
+        //     Mat Bn_mat = Mat(frame_height, frame_width, CV_64F, Bn_h);
 
-	        char buffer_1[100];
-    	    sprintf(buffer_1, "./output/test_Mp%d.jpg",frame_counter);
-            saveFrame(MovingPixelMap_mat, buffer_1);
-	        char buffer_2[100];
-    	    sprintf(buffer_2, "./output/test_In%d.jpg",frame_counter);
-	        saveFrame(In_mat, buffer_2);
-            char buffer_3[100];
-            sprintf(buffer_3, "./output/testTn%d.jpg",frame_counter);
-            saveFrame(Tn_mat, buffer_3);
-	        char buffer_4[100];
-            sprintf(buffer_4, "./output/testBn%d.jpg",frame_counter);
-            saveFrame(Bn_mat, buffer_4);
-        }
+	       //  char buffer_1[100];
+    	   //  sprintf(buffer_1, "./output/test_Mp%d.jpg",frame_counter);
+        //     saveFrame(MovingPixelMap_mat, buffer_1);
+	       //  char buffer_2[100];
+    	   //  sprintf(buffer_2, "./output/test_In%d.jpg",frame_counter);
+	       //  saveFrame(In_mat, buffer_2);
+        //  //    char buffer_3[100];
+        //  //    sprintf(buffer_3, "./output/testTn%d.jpg",frame_counter);
+        //  //    saveFrame(Tn_mat, buffer_3);
+	       //  // char buffer_4[100];
+        //  //    sprintf(buffer_4, "./output/testBn%d.jpg",frame_counter);
+        //  //    saveFrame(Bn_mat, buffer_4);
+        // }
 
         frame_counter++;
     }
